@@ -21,6 +21,7 @@ import { AnalyticsView } from './components/AnalyticsView.tsx';
 import { ClonerView } from './components/ClonerView.tsx';
 import { CookiePresellView } from './components/CookiePresellView.tsx';
 import { DomainsView } from './components/DomainsView.tsx';
+import { DownloadAppButtons } from './components/DownloadAppButtons.tsx';
 import { PageEditor } from './components/PageEditor.tsx';
 import { PreviewModal } from './components/PreviewModal.tsx';
 import { TemplatesView } from './components/TemplatesView.tsx';
@@ -324,11 +325,14 @@ export default function App() {
           </div>
         </nav>
 
-        <div className="border-t border-white/[0.06] p-4 text-xs text-[#9CA3AF]">
-          <p className="font-medium text-[#F4F4F6]">Uso Self-Hosted Ilimitado</p>
-          <p className="mt-0.5 tabular-nums">
-            {pages.length} páginas · {domains.length} domínios
-          </p>
+        <div className="space-y-3 border-t border-white/[0.06] p-3.5">
+          <DownloadAppButtons onNotify={notify} />
+          <div className="px-1 text-xs text-[#9CA3AF]">
+            <p className="font-medium text-[#F4F4F6]">Uso Self-Hosted Ilimitado</p>
+            <p className="mt-0.5 tabular-nums">
+              {pages.length} páginas · {domains.length} domínios
+            </p>
+          </div>
         </div>
       </aside>
 

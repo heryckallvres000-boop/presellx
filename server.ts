@@ -3,6 +3,7 @@ import dns from 'dns/promises';
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
+import JSZip from 'jszip';
 import path from 'path';
 import { auditCompliance, generateCopyVariations, translateTextBatch } from './src/server/ai.ts';
 import { cloneAndSanitizeUrl, extractAssetsFromHtml, updateHtmlAssets } from './src/server/cloner.ts';
@@ -791,6 +792,133 @@ app.get('/api/leads/export', (_req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="codexpages-leads.csv"');
   res.send([header, ...rows].join('\n'));
+});
+
+// ======================== APP ARCHIVE EXPORTS ========================
+function addWorkspaceFilesToZip(zip: JSZip, includeDist: boolean) {
+  const rootDir = process.cwd();
+  const rootFiles = [
+    'package.json',
+    'package-lock.json',
+    'tsconfig.json',
+    'vite.config.ts',
+    'index.html',
+    'server.ts',
+    'metadata.json',
+    '.env.example',
+  ];
+
+  for (const file of rootFiles) {
+    const abs = path.join(rootDir, file);
+    if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+      zip.file(file, fs.readFileSync(abs));
+    }
+  }
+
+  function addDirRecursive(absDir: string, zipRelDir: string) {
+    if (!fs.existsSync(absDir)) return;
+    const entries = fs.readdirSync(absDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (['node_modules', '.git', 'data'].includes(entry.name)) continue;
+      const absEntry = path.join(absDir, entry.name);
+      const relEntry = `${zipRelDir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        addDirRecursive(absEntry, relEntry);
+      } else if (entry.isFile()) {
+        zip.file(relEntry, fs.readFileSync(absEntry));
+      }
+    }
+  }
+
+  addDirRecursive(path.join(rootDir, 'src'), 'src');
+  if (includeDist) {
+    addDirRecursive(path.join(rootDir, 'dist'), 'dist');
+  }
+}
+
+app.get('/api/download/webapp', async (_req, res) => {
+  try {
+    const zip = new JSZip();
+    addWorkspaceFilesToZip(zip, false);
+    zip.file(
+      'README.txt',
+      [
+        'CODEXPAGES — Self-Hosted Web App',
+        '=================================',
+        '',
+        '1. Instale as dependencias:',
+        '   npm install',
+        '',
+        '2. (Opcional) Configure sua GEMINI_API_KEY no arquivo .env',
+        '',
+        '3. Inicie o servidor:',
+        '   npm run dev',
+        '',
+        '4. Acesse no navegador:',
+        '   http://localhost:3000',
+      ].join('\r\n')
+    );
+
+    const buffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="CODEXPAGES-WebApp.zip"');
+    res.send(buffer);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Erro ao compactar projeto.';
+    res.status(500).json({ error: msg });
+  }
+});
+
+app.get('/api/download/windows-portable', async (_req, res) => {
+  try {
+    const zip = new JSZip();
+    addWorkspaceFilesToZip(zip, true);
+
+    zip.file(
+      'Iniciar-CODEXPAGES.bat',
+      [
+        '@echo off',
+        'title CODEXPAGES Self-Hosted',
+        'cd /d "%~dp0"',
+        'where node >nul 2>nul',
+        'if %ERRORLEVEL% NEQ 0 (',
+        '  echo [ERRO] Node.js 20+ nao encontrado. Baixe em https://nodejs.org',
+        '  pause',
+        '  exit /b 1',
+        ')',
+        'if not exist "node_modules" (',
+        '  echo Instalando dependencias iniciais do CODEXPAGES...',
+        '  call npm install',
+        ')',
+        'echo Iniciando CODEXPAGES em http://localhost:3000 ...',
+        'start "" http://localhost:3000',
+        'call npm run dev',
+        'pause',
+      ].join('\r\n')
+    );
+
+    zip.file(
+      'README-WINDOWS.txt',
+      [
+        'CODEXPAGES — Pacote Portable para Windows (64-bit)',
+        '==================================================',
+        '',
+        'Como executar:',
+        '1. Extraia todos os arquivos deste ZIP para uma pasta (ex: C:\\CODEXPAGES).',
+        '2. Certifique-se de ter o Node.js 20+ instalado (https://nodejs.org).',
+        '3. De um duplo clique em "Iniciar-CODEXPAGES.bat".',
+        '4. O painel abrira automaticamente em http://localhost:3000 com banco SQLite local.',
+      ].join('\r\n')
+    );
+
+    const buffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="CODEXPAGES-Portable-Win64.zip"');
+    res.send(buffer);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Erro ao gerar pacote Windows.';
+    res.status(500).json({ error: msg });
+  }
 });
 
 // ======================== VITE / STATIC FRONTEND ========================
