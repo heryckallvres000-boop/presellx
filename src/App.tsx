@@ -15,6 +15,7 @@ import {
   Plus,
   Search,
   Trash2,
+  X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { AnalyticsView } from './components/AnalyticsView.tsx';
@@ -47,6 +48,7 @@ export default function App() {
   const [editingPage, setEditingPage] = useState<PageRecord | null>(null);
   const [previewPage, setPreviewPage] = useState<PageRecord | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [downloadModalOpen, setDownloadModalOpen] = useState(false);
 
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
@@ -66,11 +68,31 @@ export default function App() {
         fetch('/api/domains'),
       ]);
       const [pData, fData, dData] = await Promise.all([pRes.json(), fRes.json(), dRes.json()]);
-      setPages(Array.isArray(pData) ? pData : []);
-      setFolders(Array.isArray(fData) ? fData : []);
-      setDomains(Array.isArray(dData) ? dData : []);
+      const nextPages = Array.isArray(pData) ? pData : [];
+      const nextFolders = Array.isArray(fData) ? fData : [];
+      const nextDomains = Array.isArray(dData) ? dData : [];
+      setPages(nextPages);
+      setFolders(nextFolders);
+      setDomains(nextDomains);
+      try {
+        localStorage.setItem('codexpages_pages_cache_v1', JSON.stringify(nextPages));
+        localStorage.setItem('codexpages_folders_cache_v1', JSON.stringify(nextFolders));
+        localStorage.setItem('codexpages_domains_cache_v1', JSON.stringify(nextDomains));
+      } catch {
+        // Ignore storage quota issues
+      }
     } catch {
-      notify('Erro ao carregar dados do workspace.', 'error');
+      try {
+        const cachedPages = localStorage.getItem('codexpages_pages_cache_v1');
+        const cachedFolders = localStorage.getItem('codexpages_folders_cache_v1');
+        const cachedDomains = localStorage.getItem('codexpages_domains_cache_v1');
+        if (cachedPages) setPages(JSON.parse(cachedPages));
+        if (cachedFolders) setFolders(JSON.parse(cachedFolders));
+        if (cachedDomains) setDomains(JSON.parse(cachedDomains));
+      } catch {
+        // Ignore corrupt cache
+      }
+      notify('Usando cache local do navegador.', 'error');
     } finally {
       setLoading(false);
     }
@@ -211,14 +233,14 @@ export default function App() {
   return (
     <div className="flex min-h-screen bg-[#121316] text-[#F4F4F6]">
       {/* Left Sidebar */}
-      <aside className="hidden w-[264px] shrink-0 flex-col border-r border-white/[0.08] bg-[#17191E] md:flex">
-        <div className="flex h-16 items-center border-b border-white/[0.08] px-6">
+      <aside className="hidden h-screen sticky top-0 w-[264px] shrink-0 flex-col border-r border-white/[0.08] bg-[#17191E] md:flex">
+        <div className="flex h-16 shrink-0 items-center border-b border-white/[0.08] px-6">
           <span className="text-lg font-extrabold tracking-tight text-white whitespace-nowrap">
             CODEXPAGES
           </span>
         </div>
 
-        <nav className="flex-1 space-y-1 p-3">
+        <nav className="flex-1 overflow-y-auto space-y-1 p-3">
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = section === item.id;
@@ -365,6 +387,15 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setDownloadModalOpen(true)}
+              className="flex items-center gap-2 rounded-xl border border-white/[0.1] bg-[#1C1E24] px-3.5 py-2 text-xs font-semibold text-[#F4F4F6] transition-colors hover:bg-[#262932] whitespace-nowrap shrink-0"
+            >
+              <Download className="h-3.5 w-3.5 text-[#FF6B00]" />
+              Baixar App
+            </button>
+
             <button
               type="button"
               onClick={handleCreateBlankPage}
@@ -544,11 +575,11 @@ export default function App() {
                             <a
                               href={`/api/pages/${page.id}/export`}
                               download={`${page.slug}.html`}
-                              title="Exportar HTML puro"
+                              title="Baixar arquivo HTML puro"
                               className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-[#262932] px-3 py-2 text-xs font-medium text-[#F4F4F6] hover:bg-white/[0.08] whitespace-nowrap"
                             >
                               <Download className="h-3.5 w-3.5" />
-                              .HTML
+                              Baixar .HTML
                             </a>
 
                             <a
@@ -649,6 +680,38 @@ export default function App() {
 
       {/* Responsive Desktop/Mobile Preview Modal */}
       <PreviewModal page={previewPage} onClose={() => setPreviewPage(null)} />
+
+      {/* Download App Modal */}
+      {downloadModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-white/[0.1] bg-[#1C1E24] p-6 shadow-2xl space-y-4">
+            <div className="flex items-start justify-between gap-4 border-b border-white/[0.08] pb-3">
+              <div>
+                <h3 className="text-base font-bold text-[#F4F4F6]">
+                  Baixar CODEXPAGES Self-Hosted
+                </h3>
+                <p className="mt-1 text-xs text-[#9CA3AF]">
+                  Execute localmente no Windows ou hospede o código-fonte completo em qualquer VPS Node.js.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDownloadModalOpen(false)}
+                aria-label="Fechar janela de download"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-[#262932] text-[#9CA3AF] hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <DownloadAppButtons onNotify={notify} />
+
+            <p className="text-[11px] leading-relaxed text-[#9CA3AF]">
+              <strong className="text-[#F4F4F6]">Web App (.HTML):</strong> abre direto em qualquer navegador com duplo clique (sem instalar nada, salvo em <span className="font-mono text-[#F4F4F6]">localStorage</span>). Nos pacotes <span className="font-mono text-[#F4F4F6]">.zip</span>, execute <span className="font-mono text-[#F4F4F6]">Iniciar-CODEXPAGES.bat</span> (Windows) ou <span className="font-mono text-[#F4F4F6]">Abrir-CODEXPAGES-WebApp.html</span>.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Toast Feedback */}
       {toast && (

@@ -8,6 +8,7 @@ import path from 'path';
 import { auditCompliance, generateCopyVariations, translateTextBatch } from './src/server/ai.ts';
 import { cloneAndSanitizeUrl, extractAssetsFromHtml, updateHtmlAssets } from './src/server/cloner.ts';
 import { compilePageHtml } from './src/server/compiler.ts';
+import { generateStandaloneWebAppHtml } from './src/server/webappStandalone.ts';
 import {
   DEFAULT_CONVERSION_TOOLS,
   DEFAULT_COOKIE_CONFIG,
@@ -836,32 +837,89 @@ function addWorkspaceFilesToZip(zip: JSZip, includeDist: boolean) {
   }
 }
 
+function buildLauncherScripts(zip: JSZip) {
+  zip.file(
+    'Iniciar-CODEXPAGES.bat',
+    [
+      '@echo off',
+      'title CODEXPAGES Self-Hosted',
+      'cd /d "%~dp0"',
+      'where node >nul 2>nul',
+      'if %ERRORLEVEL% NEQ 0 (',
+      '  echo [ERRO] Node.js 20+ nao encontrado. Baixe em https://nodejs.org',
+      '  pause',
+      '  exit /b 1',
+      ')',
+      'if not exist "node_modules" (',
+      '  echo Instalando dependencias do CODEXPAGES...',
+      '  call npm install',
+      ')',
+      'set PORT=3000',
+      'set NODE_ENV=production',
+      'echo Iniciando CODEXPAGES em http://localhost:3000 ...',
+      'start "" /b cmd /c "timeout /t 2 /nobreak >nul & start http://localhost:3000"',
+      'call npx tsx server.ts',
+      'pause',
+    ].join('\r\n')
+  );
+
+  zip.file(
+    'iniciar-codexpages.sh',
+    [
+      '#!/usr/bin/env bash',
+      'set -e',
+      'cd "$(dirname "$0")"',
+      'if ! command -v node >/dev/null 2>&1; then',
+      '  echo "[ERRO] Node.js 20+ nao encontrado. Baixe em https://nodejs.org"',
+      '  exit 1',
+      'fi',
+      'if [ ! -d "node_modules" ]; then',
+      '  echo "Instalando dependencias do CODEXPAGES..."',
+      '  npm install',
+      'fi',
+      'export PORT=3000',
+      'export NODE_ENV=production',
+      'echo "Iniciando CODEXPAGES em http://localhost:3000 ..."',
+      '(sleep 2 && (xdg-open http://localhost:3000 >/dev/null 2>&1 || open http://localhost:3000 >/dev/null 2>&1 || true)) &',
+      'npx tsx server.ts',
+    ].join('\n'),
+    { unixPermissions: '755' }
+  );
+}
+
+app.get('/api/download/webapp-html', (_req, res) => {
+  const html = generateStandaloneWebAppHtml();
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="CODEXPAGES-WebApp.html"');
+  res.send(html);
+});
+
 app.get('/api/download/webapp', async (_req, res) => {
   try {
     const zip = new JSZip();
-    addWorkspaceFilesToZip(zip, false);
+    addWorkspaceFilesToZip(zip, true);
+    buildLauncherScripts(zip);
+    zip.file('Abrir-CODEXPAGES-WebApp.html', generateStandaloneWebAppHtml());
     zip.file(
       'README.txt',
       [
         'CODEXPAGES — Self-Hosted Web App',
         '=================================',
         '',
-        '1. Instale as dependencias:',
-        '   npm install',
+        'OPCAO 1 — Abrir direto no navegador (sem instalar nada):',
+        '  De um duplo clique em "Abrir-CODEXPAGES-WebApp.html".',
         '',
-        '2. (Opcional) Configure sua GEMINI_API_KEY no arquivo .env',
-        '',
-        '3. Inicie o servidor:',
-        '   npm run dev',
-        '',
-        '4. Acesse no navegador:',
-        '   http://localhost:3000',
+        'OPCAO 2 — Servidor Completo (Node.js + SQLite + Clonador + IA):',
+        '  Windows: De um duplo clique em "Iniciar-CODEXPAGES.bat".',
+        '  macOS/Linux: chmod +x iniciar-codexpages.sh && ./iniciar-codexpages.sh',
+        '  Acesse: http://localhost:3000',
       ].join('\r\n')
     );
 
     const buffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', 'attachment; filename="CODEXPAGES-WebApp.zip"');
+    res.setHeader('Content-Length', String(buffer.length));
     res.send(buffer);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Erro ao compactar projeto.';
@@ -873,29 +931,8 @@ app.get('/api/download/windows-portable', async (_req, res) => {
   try {
     const zip = new JSZip();
     addWorkspaceFilesToZip(zip, true);
-
-    zip.file(
-      'Iniciar-CODEXPAGES.bat',
-      [
-        '@echo off',
-        'title CODEXPAGES Self-Hosted',
-        'cd /d "%~dp0"',
-        'where node >nul 2>nul',
-        'if %ERRORLEVEL% NEQ 0 (',
-        '  echo [ERRO] Node.js 20+ nao encontrado. Baixe em https://nodejs.org',
-        '  pause',
-        '  exit /b 1',
-        ')',
-        'if not exist "node_modules" (',
-        '  echo Instalando dependencias iniciais do CODEXPAGES...',
-        '  call npm install',
-        ')',
-        'echo Iniciando CODEXPAGES em http://localhost:3000 ...',
-        'start "" http://localhost:3000',
-        'call npm run dev',
-        'pause',
-      ].join('\r\n')
-    );
+    buildLauncherScripts(zip);
+    zip.file('Abrir-CODEXPAGES-WebApp.html', generateStandaloneWebAppHtml());
 
     zip.file(
       'README-WINDOWS.txt',
@@ -905,15 +942,17 @@ app.get('/api/download/windows-portable', async (_req, res) => {
         '',
         'Como executar:',
         '1. Extraia todos os arquivos deste ZIP para uma pasta (ex: C:\\CODEXPAGES).',
-        '2. Certifique-se de ter o Node.js 20+ instalado (https://nodejs.org).',
-        '3. De um duplo clique em "Iniciar-CODEXPAGES.bat".',
-        '4. O painel abrira automaticamente em http://localhost:3000 com banco SQLite local.',
+        '2. Para rodar o servidor completo (Clonador + SQLite + IA):',
+        '   De um duplo clique em "Iniciar-CODEXPAGES.bat" (requer Node.js 20+).',
+        '3. Ou para abrir direto no navegador sem Node.js:',
+        '   De um duplo clique em "Abrir-CODEXPAGES-WebApp.html".',
       ].join('\r\n')
     );
 
     const buffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', 'attachment; filename="CODEXPAGES-Portable-Win64.zip"');
+    res.setHeader('Content-Length', String(buffer.length));
     res.send(buffer);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Erro ao gerar pacote Windows.';
@@ -923,7 +962,11 @@ app.get('/api/download/windows-portable', async (_req, res) => {
 
 // ======================== VITE / STATIC FRONTEND ========================
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
+  const distDir = path.resolve(process.cwd(), 'dist');
+  const hasBuiltDist = fs.existsSync(path.join(distDir, 'index.html'));
+  const isExplicitDev = process.env.NODE_ENV === 'development';
+
+  if (isExplicitDev || !hasBuiltDist) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -931,7 +974,6 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distDir = path.resolve(process.cwd(), 'dist');
     const assetsDir = path.resolve(process.cwd(), 'src/assets');
     if (fs.existsSync(assetsDir)) {
       app.use('/src/assets', express.static(assetsDir));
